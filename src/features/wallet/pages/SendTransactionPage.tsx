@@ -82,8 +82,7 @@ const SendTransactionPage: React.FC = observer(() => {
 
   const handleSendTransaction = () => {
     if (!selectedAsset || !recipientAddress || !amount) return
-    
-    const asset = availableAssets.find(a => a.symbol === selectedAsset)
+
     sdkConsoleStore.addLog('sendTransaction', 'info', `Creating transaction for ${amount} ${selectedAsset}...`)
     
     setTimeout(() => {

@@ -1,6 +1,7 @@
 import { makeAutoObservable, runInAction } from 'mobx'
 import { FireblocksService, getFireblocksService } from '@/services/FireblocksService'
 import type { WalletInfo, KeyGenerationResult } from '@/types/fireblocks'
+import type { TMPCAlgorithm } from '@fireblocks/ncw-js-sdk'
 
 export interface SDKInitializationState {
   isInitializing: boolean
@@ -153,7 +154,7 @@ export class FireblocksStore {
       throw new Error('Fireblocks service not initialized')
     }
 
-    const result = await this.fireblocksService.generateMPCKeys(algorithms)
+    const result = await this.fireblocksService.generateMPCKeys(algorithms as TMPCAlgorithm[])
     
     runInAction(() => {
       this.hasGeneratedKeys = true

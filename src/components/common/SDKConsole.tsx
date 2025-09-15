@@ -2,15 +2,9 @@ import React from 'react'
 import { observer } from 'mobx-react-lite'
 import { useSDKConsoleStore } from '@/app/providers/StoreProvider'
 
-// Simple syntax highlighter for JavaScript/TypeScript code - disabled for now to prevent issues
-const highlightCode = (code: string): string => {
-  // Return code as-is without highlighting to avoid breaking the display
-  return code
-}
-
 export const SDKConsole: React.FC = observer(() => {
   const sdkConsoleStore = useSDKConsoleStore()
-  const { currentImplementation, isConsoleOpen } = sdkConsoleStore
+  const { currentImplementation } = sdkConsoleStore
 
   if (!currentImplementation) return null
 
