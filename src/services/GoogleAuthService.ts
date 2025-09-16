@@ -19,7 +19,6 @@ export interface GoogleTokenResponse {
 }
 
 export class GoogleAuthService {
-  private tokenClient: google.accounts.oauth2.TokenClient | null = null
   private isScriptLoaded = false
 
   constructor(private clientId: string) {}
@@ -74,6 +73,11 @@ export class GoogleAuthService {
 
     return new Promise((resolve, reject) => {
       let resolved = false
+
+      if (!window.google?.accounts?.id) {
+        reject(new Error('Google Identity Services not available'))
+        return
+      }
 
       // Set up the callback to capture the ID token
       window.google.accounts.id.initialize({
@@ -164,6 +168,11 @@ export class GoogleAuthService {
       const container = document.getElementById(containerId)
       if (!container) {
         reject(new Error(`Container element with id '${containerId}' not found`))
+        return
+      }
+
+      if (!window.google?.accounts?.id) {
+        reject(new Error('Google Identity Services not available'))
         return
       }
 
