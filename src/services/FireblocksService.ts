@@ -34,8 +34,22 @@ export class FireblocksService {
   async initializeEWSDK(authTokenRetriever: () => Promise<string>): Promise<EmbeddedWallet> {
     try {
       const tokenToInitializeWith = await authTokenRetriever()
-      console.log(`Initializing Fireblocks EW SDK with token ${tokenToInitializeWith} auth client ${this.config.authClientId}`)
-      
+      console.log('🔐 Initializing Fireblocks EW SDK:')
+      console.log(`  - Auth Client ID: ${this.config.authClientId}`)
+      console.log(`  - Environment: ${this.config.environment}`)
+      console.log(`  - Token preview: ${tokenToInitializeWith.substring(0, 50)}...`)
+
+      // Decode token to verify claims
+      try {
+        const payload = JSON.parse(atob(tokenToInitializeWith.split('.')[1]))
+        console.log('📋 Token being sent to Fireblocks has claims:')
+        console.log(`  - iss: ${payload.iss} (should be: https://accounts.google.com)`)
+        console.log(`  - aud: ${payload.aud} (should be: ${import.meta.env.VITE_GOOGLE_CLIENT_ID})`)
+        console.log(`  - exp: ${new Date(payload.exp * 1000).toISOString()}`)
+      } catch (e) {
+        console.log('⚠️ Could not decode token - may not be a JWT')
+      }
+
       const ewSDK = new EmbeddedWallet({
         env: this.config.environment,
         logLevel: 'INFO',
@@ -49,9 +63,21 @@ export class FireblocksService {
       this.ewSDK = ewSDK
       console.log('✅ EW SDK initialized successfully')
       return ewSDK
-    } catch (error) {
+    } catch (error: any) {
       console.error('❌ EW SDK initialization failed:', error)
-      throw new Error(`EW SDK initialization failed: ${error}`)
+
+      // Check for specific 401 error
+      if (error?.response?.status === 401 || error?.status === 401 || error?.message?.includes('401')) {
+        console.error('🔴 401 Authentication Error Details:')
+        console.error('  - This typically means the token validation failed on Fireblocks side')
+        console.error('  - Check that your Fireblocks OAuth configuration matches:')
+        console.error(`    • Audience: ${import.meta.env.VITE_GOOGLE_CLIENT_ID}`)
+        console.error('    • Issuer: https://accounts.google.com')
+        console.error('    • JWKS URI: https://www.googleapis.com/oauth2/v3/certs')
+        console.error('  - Verify the API User has "EW Signer" role')
+      }
+
+      throw new Error(`EW SDK initialization failed: ${error?.message || error}`)
     }
   }
 
@@ -126,9 +152,34 @@ async assignWallet(): Promise<any> {
     }
     
     console.log('📋 Assigning wallet...')
-    const wallet = await this.ewSDK.assignWallet()
-    console.log('✅ Wallet assigned:', wallet.walletId)
-    return wallet
+    try {
+      const wallet = await this.ewSDK.assignWallet()
+      console.log('✅ Wallet assigned:', wallet.walletId)
+      return wallet
+    } catch (error: any) {
+      console.error('❌ Wallet assignment failed:', error)
+      console.error('Error details:', {
+        message: error?.message,
+        status: error?.status,
+        response: error?.response,
+        stack: error?.stack?.split('\n').slice(0, 3)
+      })
+
+      // Check if it's a 401 authentication error
+      if (error?.message?.includes('401') || error?.status === 401) {
+        console.error('🔴 Authentication Error Analysis:')
+        console.error('1. OAuth Client ID:', this.config.authClientId)
+        console.error('2. Environment:', this.config.environment)
+        console.error('3. Token used has valid signature and claims')
+        console.error('4. Possible issues:')
+        console.error('   - OAuth Client ID not configured for production environment')
+        console.error('   - API User does not have EW Signer role')
+        console.error('   - API User not associated with this OAuth Client ID')
+        console.error('   - Token audience/issuer mismatch in Fireblocks config')
+      }
+
+      throw error
+    }
   }
 
   // Generate MPC keys using real SDK

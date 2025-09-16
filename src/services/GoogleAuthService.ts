@@ -47,60 +47,73 @@ export class GoogleAuthService {
     })
   }
 
-  // Initialize Google OAuth client
+  // Initialize Google OAuth client with ID token support
   async initializeClient(): Promise<void> {
     await this.loadGoogleScript()
-    
-    if (!window.google?.accounts?.oauth2) {
+
+    if (!window.google?.accounts?.id) {
       throw new Error('Google Identity Services not available')
     }
 
-    this.tokenClient = window.google.accounts.oauth2.initTokenClient({
+    // Initialize Google Sign-In to get real ID tokens
+    window.google.accounts.id.initialize({
       client_id: this.clientId,
-      scope: 'openid email profile',
-      callback: '', // Will be set when requesting token
-      // No redirect_uri needed for popup flow
-      include_granted_scopes: true,
+      callback: (response: any) => {
+        // This will be handled by the promise in authenticateUser
+        console.log('📋 Received credential response:', response.credential ? 'ID token received' : 'No credential')
+      },
+      auto_select: false,
+      cancel_on_tap_outside: false,
+      use_fedcm_for_prompt: false // Disable FedCM to avoid CORS issues
     })
   }
 
-  // Request access token with popup
-  async requestAccessToken(): Promise<GoogleTokenResponse> {
-    if (!this.tokenClient) {
-      await this.initializeClient()
-    }
+  // Get real ID token from Google using One Tap
+  async getIdToken(): Promise<string> {
+    await this.initializeClient()
 
     return new Promise((resolve, reject) => {
-      if (!this.tokenClient) {
-        reject(new Error('Token client not initialized'))
-        return
-      }
+      let resolved = false
 
-      console.log('🔵 GoogleAuthService: Setting up token callback...')
+      // Set up the callback to capture the ID token
+      window.google.accounts.id.initialize({
+        client_id: this.clientId,
+        callback: (response: any) => {
+          if (!resolved && response.credential) {
+            resolved = true
+            console.log('✅ Real ID token received from Google One Tap')
+            resolve(response.credential)
+          }
+        },
+        auto_select: false,
+        cancel_on_tap_outside: false
+      })
 
-      this.tokenClient.callback = (response: any) => {
-        console.log('🔵 GoogleAuthService: Received OAuth response:', response)
-        
-        if (response.error) {
-          console.error('❌ GoogleAuthService: OAuth error:', response.error)
-          reject(new Error(`Google OAuth error: ${response.error}`))
-          return
+      // Use the prompt method directly
+      window.google.accounts.id.prompt((notification: any) => {
+        console.log('🔔 Google One Tap notification:', notification.getMomentType())
+
+        if (!resolved) {
+          if (notification.isNotDisplayed()) {
+            resolved = true
+            reject(new Error('Google One Tap was not displayed - user may need to enable third-party cookies'))
+          } else if (notification.isSkippedMoment()) {
+            resolved = true
+            reject(new Error('Google One Tap was skipped by user'))
+          } else if (notification.isDismissedMoment()) {
+            resolved = true
+            reject(new Error('Google One Tap was dismissed by user'))
+          }
         }
-        
-        console.log('✅ GoogleAuthService: OAuth successful, got tokens')
-        resolve(response)
-      }
+      })
 
-      console.log('🔵 GoogleAuthService: Requesting access token...')
-      try {
-        this.tokenClient.requestAccessToken({
-          prompt: 'consent',
-        })
-        console.log('🔵 GoogleAuthService: requestAccessToken called')
-      } catch (error) {
-        console.error('❌ GoogleAuthService: Failed to request access token:', error)
-        reject(error)
-      }
+      // Timeout after 10 seconds
+      setTimeout(() => {
+        if (!resolved) {
+          resolved = true
+          reject(new Error('Google One Tap timeout'))
+        }
+      }, 10000)
     })
   }
 
@@ -143,39 +156,87 @@ export class GoogleAuthService {
     }
   }
 
-  // Complete OAuth flow - returns user info and tokens
-  async authenticateUser(): Promise<{
+  // Render Google Sign-In button in existing element
+  async renderGoogleButton(containerId: string): Promise<string> {
+    await this.initializeClient()
+
+    return new Promise((resolve, reject) => {
+      const container = document.getElementById(containerId)
+      if (!container) {
+        reject(new Error(`Container element with id '${containerId}' not found`))
+        return
+      }
+
+      // Set up the callback
+      window.google.accounts.id.initialize({
+        client_id: this.clientId,
+        callback: (response: any) => {
+          if (response.credential) {
+            console.log('✅ Real ID token received from Google button')
+            resolve(response.credential)
+          } else {
+            reject(new Error('No credential received'))
+          }
+        }
+      })
+
+      // Clear container and render the button
+      container.innerHTML = ''
+      window.google.accounts.id.renderButton(container, {
+        theme: 'filled_blue',
+        size: 'large',
+        type: 'standard',
+        text: 'signin_with',
+        width: container.offsetWidth || 300
+      })
+    })
+  }
+
+  // Complete authentication flow with real Google ID token
+  async authenticateUser(containerId?: string): Promise<{
     user: GoogleUser
     tokens: GoogleTokenResponse
   }> {
-    // Initialize client if not already done
-    if (!this.tokenClient) {
-      await this.initializeClient()
+    try {
+      console.log('🔐 Getting real ID token from Google Sign-In...')
+
+      // Use Google button in specified container (no modal fallback)
+      const idToken = await this.renderGoogleButton(containerId || 'google-signin-container')
+
+      console.log('🎫 Real ID token received:', idToken.substring(0, 50) + '...')
+
+      // Verify this is a real JWT
+      if (!idToken.startsWith('eyJ')) {
+        throw new Error('Invalid ID token format - not a JWT')
+      }
+
+      // Decode the real ID token
+      const user = this.decodeIdToken(idToken)
+
+      // Debug: Log the ID token claims
+      const payload = JSON.parse(atob(idToken.split('.')[1]))
+      console.log('🔍 Real ID Token Claims:', {
+        iss: payload.iss,
+        aud: payload.aud,
+        sub: payload.sub,
+        email: payload.email,
+        exp: new Date(payload.exp * 1000).toISOString(),
+        iat: new Date(payload.iat * 1000).toISOString(),
+      })
+
+      const tokens: GoogleTokenResponse = {
+        access_token: idToken, // Use ID token for Fireblocks
+        id_token: idToken,
+        expires_in: payload.exp - payload.iat,
+        scope: 'openid email profile',
+        token_type: 'Bearer'
+      }
+
+      return { user, tokens }
+    } catch (error) {
+      console.error('❌ Google Sign-In completely failed:', error)
+      throw new Error(`Google authentication failed: ${error}`)
     }
-
-    // Request tokens
-    const tokens = await this.requestAccessToken()
-    console.log('🔍 OAuth tokens received:', tokens)
-
-    // Check if we have id_token, if not get user info from API
-    let user: GoogleUser
-    if (tokens.id_token) {
-      console.log('✅ Using ID token to get user info')
-      user = this.decodeIdToken(tokens.id_token)
-    } else {
-      console.log('⚠️ No ID token, fetching user info from API')
-      user = await this.getUserInfo(tokens.access_token)
-    }
-
-    console.log('👤 User info:', user)
-    
-    // For Fireblocks EW SDK, we can use access_token if no id_token
-    const finalTokens = {
-      ...tokens,
-      id_token: tokens.id_token || tokens.access_token // Fallback to access_token
-    }
-
-    return { user, tokens: finalTokens }
   }
 }
 
@@ -205,6 +266,9 @@ declare global {
           initTokenClient: (config: any) => google.accounts.oauth2.TokenClient
         }
         id: {
+          initialize: (config: any) => void
+          renderButton: (element: HTMLElement, config: any) => void
+          prompt: (callback?: (notification: any) => void) => void
           disableAutoSelect: () => void
         }
       }

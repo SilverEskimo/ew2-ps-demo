@@ -80,7 +80,7 @@ export class AuthStore {
     }
   }
 
-  async loginWithGoogle() {
+  async loginWithGoogle(containerId?: string) {
     this.isLoading = true
     this.error = null
 
@@ -89,7 +89,7 @@ export class AuthStore {
       const { getGoogleAuthService } = await import('../services/GoogleAuthService')
       
       const googleAuth = getGoogleAuthService()
-      const { user, tokens } = await googleAuth.authenticateUser()
+      const { user, tokens } = await googleAuth.authenticateUser(containerId)
       
       runInAction(() => {
         this.user = {
